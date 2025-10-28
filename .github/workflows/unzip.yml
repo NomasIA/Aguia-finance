@@ -1,9 +1,12 @@
 name: Extract project
+permissions:
+  contents: write
+
 on:
-  workflow_dispatch: {}      # permite rodar manualmente
+  workflow_dispatch: {}
   push:
     paths:
-      - "**/*.zip"           # dispara em qualquer .zip
+      - "**/*.zip"
 
 jobs:
   unzip:
@@ -15,7 +18,6 @@ jobs:
         run: |
           sudo apt-get update -y
           sudo apt-get install -y unzip
-          # pega o primeiro zip encontrado na raiz
           ZIP_FILE="$(ls -1 *.zip 2>/dev/null | head -n 1 || true)"
           if [ -z "$ZIP_FILE" ]; then
             echo "Nenhum .zip encontrado na raiz do repositório."
@@ -26,15 +28,18 @@ jobs:
           rm -f "$ZIP_FILE"
 
       - name: Commit extracted files
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           git config user.name "Yohan Linero"
           git config user.email "yuricv89@hotmail.com"
+          git remote set-url origin https://NomasIA:${GH_PAT}@github.com/NomasIA/Aguia-finance.git
           git add .
-          # Só commita se houver mudanças
           if ! git diff --cached --quiet; then
             git commit -m "Extraído automaticamente pelo GitHub Actions"
-            git push
+            git push origin main
           else
             echo "Sem mudanças para commitar."
           fi
 
+       
