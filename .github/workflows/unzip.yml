@@ -1,38 +1,64 @@
+name: Unzip and open PR
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '*.zip'
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
-  extract-and-push:
+  unzip:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
 
-      - name: Find and extract ZIP
+      - name: Find and extract zip
         run: |
-          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit || true)"
+          set -euo pipefail
+          ZIP_FILE="$(ls -1 *.zip 2>/dev/null | head -n 1 || true)"
           if [ -z "$ZIP_FILE" ]; then
             echo "Nenhum .zip encontrado na raiz do repositório."
             exit 1
           fi
-          echo "Extraindo $ZIP_FILE"
-          sudo apt-get update -y && sudo apt-get install -y unzip
-          unzip -q "$ZIP_FILE" -d extracted
-          rm -f "$ZIP_FILE"
-          shopt -s dotglob
-          cp -a extracted/* .
-          rm -rf extracted
+          echo "Extraindo: $ZIP_FILE"
+          unzip -o "$ZIP_FILE"
+          # Remove o zip extraído se quiser evitar commitar o zip original:
+          # rm -f "$ZIP_FILE"
 
-      - name: Set up Git credentials (using PAT)
-        env:
-          GH_PAT: ${{ secrets.GH_PAT }}
+      - name: Configure git
         run: |
-          git config --global user.name "Yohan Linero"
-          git config --global user.email "yuricv89@hotmail.com"
-          git remote set-url origin https://NomasIA:${GH_PAT}@github.com/${{ github.repository }}.git
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
-      - name: Commit and push extracted files
+      - name: Commit changes if any
+        id: commit
         run: |
           git add -A
-          git commit -m "Extraído automaticamente pelo GitHub Actions" || echo "Sem alterações"
-          git push origin HEAD:${{ github.ref_name }}
+          if git diff --cached --quiet; then
+            echo "no_changes=true" >> $GITHUB_OUTPUT
+          else
+            BRANCH="unzip/${{ github.run_id }}"
+            git commit -m "chore: extracted files from zip (run ${{ github.run_id }})"
+            # push using token in URL to ensure auth
+            git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:refs/heads/${BRANCH}
+            echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
+            echo "no_changes=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create Pull Request (if there are changes)
+        if: steps.commit.outputs.no_changes == 'false'
+        uses: peter-evans/create-pull-request@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          title: "Add files extracted from zip (run ${{ github.run_id }})"
+          commit-message: "chore: extracted files from zip (run ${{ github.run_id }})"
+          branch: ${{ steps.commit.outputs.branch }}
+          body: |
+            Arquivos extraídos automaticamente pelo workflow.
+          labels: automated, unzip
