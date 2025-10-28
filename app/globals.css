@@ -1,0 +1,117 @@
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;700;900&family=Inter:wght@300;400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 222 26% 7%;
+    --foreground: 225 10% 92%;
+    --card: 222 20% 8%;
+    --card-foreground: 225 10% 92%;
+    --popover: 222 26% 6%;
+    --popover-foreground: 225 10% 92%;
+    --primary: 45 91% 60%;
+    --primary-foreground: 222 26% 7%;
+    --secondary: 222 15% 12%;
+    --secondary-foreground: 225 10% 92%;
+    --muted: 220 9% 62%;
+    --muted-foreground: 220 9% 62%;
+    --accent: 45 91% 60%;
+    --accent-foreground: 222 26% 7%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 100% / 0.06;
+    --input: 0 0% 100% / 0.06;
+    --ring: 45 91% 60%;
+    --chart-1: 45 91% 60%;
+    --chart-2: 142 76% 36%;
+    --chart-3: 217 91% 60%;
+    --chart-4: 38 92% 50%;
+    --chart-5: 0 84% 60%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-dark text-text font-inter;
+    background: radial-gradient(ellipse at top, #0F1117 0%, #0B0F19 50%, #060810 100%);
+    min-height: 100vh;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-orbitron;
+  }
+}
+
+@layer components {
+  .card {
+    @apply bg-surface/40 backdrop-blur-xl border border-border rounded-lg shadow-lg;
+  }
+
+  .card-hover {
+    @apply transition-all duration-300 hover:shadow-goldSoft hover:border-gold/20;
+  }
+
+  .btn-primary {
+    @apply bg-gold hover:bg-goldDeep text-dark font-semibold px-6 py-2.5 rounded-lg transition-all duration-200 shadow-gold hover:shadow-goldSoft;
+  }
+
+  .btn-secondary {
+    @apply bg-surface hover:bg-panel text-text border border-border font-semibold px-6 py-2.5 rounded-lg transition-all duration-200;
+  }
+
+  .chip-banco {
+    @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20;
+  }
+
+  .chip-dinheiro {
+    @apply inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-success/10 text-success border border-success/20;
+  }
+
+  .kpi-card {
+    @apply card card-hover p-6;
+  }
+
+  .kpi-value {
+    @apply text-3xl font-bold font-orbitron text-gold;
+  }
+
+  .kpi-label {
+    @apply text-sm text-muted uppercase tracking-wide;
+  }
+
+  .table-dark {
+    @apply w-full border-collapse;
+  }
+
+  .table-dark th {
+    @apply bg-panel text-left px-4 py-3 text-xs font-semibold text-muted uppercase tracking-wider border-b border-border;
+  }
+
+  .table-dark td {
+    @apply px-4 py-3 text-sm border-b border-border/50;
+  }
+
+  .table-dark tbody tr {
+    @apply hover:bg-surface/50 transition-colors;
+  }
+
+  .glow-gold {
+    text-shadow: 0 0 10px rgba(245, 199, 66, 0.5);
+  }
+
+  .input-dark {
+    @apply bg-panel border border-border rounded-lg px-4 py-2 text-text placeholder:text-muted focus:border-gold focus:ring-1 focus:ring-gold outline-none transition-all;
+  }
+
+  .select-dark {
+    @apply bg-panel border border-border rounded-lg px-4 py-2 text-text focus:border-gold focus:ring-1 focus:ring-gold outline-none transition-all;
+  }
+}
