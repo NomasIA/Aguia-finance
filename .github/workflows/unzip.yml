@@ -1,64 +1,104 @@
 name: Unzip and open PR
 on:
   workflow_dispatch:
-  push:
-    paths:
-      - '*.zip'
+
+# Permissões necessárias para criar PRs / push via GITHUB_TOKEN
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  unzip:
+  unzip-and-pr:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 0
+          persist-credentials: true
 
-      - name: Find and extract zip
+      - name: Ensure zip exists (search root, subdirs, or create one)
+        id: ensure_zip
         run: |
           set -euo pipefail
-          ZIP_FILE="$(ls -1 *.zip 2>/dev/null | head -n 1 || true)"
+          # Procura por .zip na raiz
+          ZIP_FILE="$(ls -1 *.zip 2>/dev/null | head -n1 || true)"
           if [ -z "$ZIP_FILE" ]; then
-            echo "Nenhum .zip encontrado na raiz do repositório."
-            exit 1
+            echo "Nenhum .zip na raiz. Buscando em subdiretórios..."
+            ZIP_FILE="$(find . -type f -name '*.zip' -not -path './.git/*' -print | head -n1 || true)"
           fi
-          echo "Extraindo: $ZIP_FILE"
-          unzip -o "$ZIP_FILE"
-          # Remove o zip extraído se quiser evitar commitar o zip original:
-          # rm -f "$ZIP_FILE"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "Nenhum .zip encontrado em todo o repositório. Gerando aguia-finance.zip (exclui .git)."
+            zip -r aguia-finance.zip . -x ".git/*" || true
+            ZIP_FILE="aguia-finance.zip"
+          fi
+          echo "Encontrado/gerado: $ZIP_FILE"
+          echo "ZIP_FILE=$ZIP_FILE" >> $GITHUB_ENV
 
-      - name: Configure git
+      - name: Install unzip (if missing)
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          sudo apt-get update
+          sudo apt-get install -y unzip zip
 
-      - name: Commit changes if any
+      - name: Extract ZIP
+        run: |
+          set -euo pipefail
+          mkdir -p extracted
+          unzip -o "$ZIP_FILE" -d extracted
+          ls -al extracted | sed -n '1,200p'
+
+      - name: Create branch, copy extracted files and commit
         id: commit
         run: |
-          git add -A
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          BRANCH="unzip/$(date +%s)"
+          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
+          git switch -c "$BRANCH"
+          # copie os arquivos extraídos para o repositório raiz (ajuste se preferir outro destino)
+          cp -r extracted/* .
+          # evitar commitar arquivos do .git
+          git add --all
           if git diff --cached --quiet; then
-            echo "no_changes=true" >> $GITHUB_OUTPUT
-          else
-            BRANCH="unzip/${{ github.run_id }}"
-            git commit -m "chore: extracted files from zip (run ${{ github.run_id }})"
-            # push using token in URL to ensure auth
-            git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:refs/heads/${BRANCH}
-            echo "branch=${BRANCH}" >> $GITHUB_OUTPUT
-            echo "no_changes=false" >> $GITHUB_OUTPUT
+            echo "Sem mudanças para commitar."
+            echo "no_changes=true" >> $GITHUB_ENV
+            exit 0
           fi
+          git commit -m "Unzip files from $ZIP_FILE"
+          echo "committed=true" >> $GITHUB_ENV
 
-      - name: Create Pull Request (if there are changes)
-        if: steps.commit.outputs.no_changes == 'false'
+      - name: Push branch (GITHUB_TOKEN) — preferido se permissões permitidas
+        if: env.no_changes != 'true'
+        env:
+          BRANCH: ${{ env.BRANCH }}
+        run: |
+          set -euo pipefail
+          # tentativa usando GITHUB_TOKEN (padrão)
+          git push --set-upstream origin "$BRANCH"
+
+      - name: Push branch (PAT fallback)
+        if: failure() && env.no_changes != 'true'
+        env:
+          BRANCH: ${{ env.BRANCH }}
+          PR_TOKEN: ${{ secrets.PR_CREATOR_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "$PR_TOKEN" ]; then
+            echo "PR_CREATOR_TOKEN não configurado. Abortando push fallback."
+            exit 1
+          fi
+          git remote set-url origin https://x-access-token:${PR_TOKEN}@github.com/${{ github.repository }}.git
+          git push --set-upstream origin "$BRANCH"
+
+      - name: Create Pull Request
+        if: env.no_changes != 'true'
         uses: peter-evans/create-pull-request@v5
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          title: "Add files extracted from zip (run ${{ github.run_id }})"
-          commit-message: "chore: extracted files from zip (run ${{ github.run_id }})"
-          branch: ${{ steps.commit.outputs.branch }}
+          token: ${{ secrets.PR_CREATOR_TOKEN || github.token }}
+          commit-message: "Unzip files from $ZIP_FILE"
+          branch: ${{ env.BRANCH }}
+          title: "Unzip: conteúdo importado de $ZIP_FILE"
           body: |
-            Arquivos extraídos automaticamente pelo workflow.
+            Workflow extraiu e adicionou arquivos a esta branch automaticamente.
+            Se necessário, ajuste o conteúdo antes de mesclar.
           labels: automated, unzip
