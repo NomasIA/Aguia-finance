@@ -1,45 +1,54 @@
 name: Extract project
+
+on:
+  workflow_dispatch:
+
 permissions:
   contents: write
 
-on:
-  workflow_dispatch: {}
-  push:
-    paths:
-      - "**/*.zip"
-
 jobs:
-  unzip:
+  extract:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
+    permissions:
+      contents: write
 
-      - name: Find and extract ZIP
+    steps:
+      - name: Checkout repository (with credentials)
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Find .zip in repo root
         run: |
-          sudo apt-get update -y
-          sudo apt-get install -y unzip
-          ZIP_FILE="$(ls -1 *.zip 2>/dev/null | head -n 1 || true)"
+          ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit || true)"
           if [ -z "$ZIP_FILE" ]; then
             echo "Nenhum .zip encontrado na raiz do repositório."
             exit 1
           fi
-          echo "Extraindo: $ZIP_FILE"
-          unzip -o "$ZIP_FILE" -d .
-          rm -f "$ZIP_FILE"
+          echo "Encontrado: $ZIP_FILE"
+          unzip -q "$ZIP_FILE" -d extracted
 
-      - name: Commit extracted files
+      - name: Move extracted files to repo root
+        run: |
+          shopt -s dotglob || true
+          cp -a extracted/* .
+          rm -rf extracted
+          echo "✅ Arquivos extraídos com sucesso!"
+
+      - name: Commit and push changes
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           git config user.name "Yohan Linero"
           git config user.email "yuricv89@hotmail.com"
-          git remote set-url origin https://NomasIA:${GH_PAT}@github.com/NomasIA/Aguia-finance.git
-          git add .
-          if ! git diff --cached --quiet; then
-            git commit -m "Extraído automaticamente pelo GitHub Actions"
-            git push origin main
-          else
-            echo "Sem mudanças para commitar."
-          fi
+          git remote set-url origin "https://NomasIA:${GH_PAT}@github.com/NomasIA/Aguia-finance.git"
+          git add -A
+          git commit -m "Extraído automaticamente pelo GitHub Actions" || echo "Sem alterações para commitar"
+          git push origin HEAD:${{ github.ref_name }}
 
-       
+          # após o commit, cria ou atualiza a branch secundária
+          git checkout -B extracted-by-actions
+          git push origin extracted-by-actions --force
+          echo "🚀 Branch 'extracted-by-actions' atualizada com sucesso."
+
