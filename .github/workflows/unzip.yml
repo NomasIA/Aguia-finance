@@ -1,104 +1,142 @@
-name: Unzip and open PR
+name: Fast Safe Unpack & Organize
+
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '*.zip'
 
-# Permissões necessárias para criar PRs / push via GITHUB_TOKEN
 permissions:
   contents: write
-  pull-requests: write
+
+env:
+  DEST_BASE: "unpacked"                # base onde cada zip será extraído
+  WORK_BRANCH_PREFIX: "unzip/run"      # branch por execução para evitar conflitos
+  MAX_FILE_SIZE_BYTES: 100000000       # 100MB limite para evitar push fail (ajuste se necessário)
 
 jobs:
-  unzip-and-pr:
+  unpack:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout repo (fast)
         uses: actions/checkout@v4
         with:
+          fetch-depth: 1
           persist-credentials: true
 
-      - name: Ensure zip exists (search root, subdirs, or create one)
-        id: ensure_zip
+      - name: Ensure unzip and zipinfo
+        run: sudo apt-get update -y && sudo apt-get install -y unzip zipinfo
+
+      - name: Fast extract, organize and push branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          # Procura por .zip na raiz
-          ZIP_FILE="$(ls -1 *.zip 2>/dev/null | head -n1 || true)"
+          ZIP_FILE="$(ls -1 *.zip 2>/dev/null | head -n 1 || true)"
           if [ -z "$ZIP_FILE" ]; then
-            echo "Nenhum .zip na raiz. Buscando em subdiretórios..."
-            ZIP_FILE="$(find . -type f -name '*.zip' -not -path './.git/*' -print | head -n1 || true)"
-          fi
-          if [ -z "$ZIP_FILE" ]; then
-            echo "Nenhum .zip encontrado em todo o repositório. Gerando aguia-finance.zip (exclui .git)."
-            zip -r aguia-finance.zip . -x ".git/*" || true
-            ZIP_FILE="aguia-finance.zip"
-          fi
-          echo "Encontrado/gerado: $ZIP_FILE"
-          echo "ZIP_FILE=$ZIP_FILE" >> $GITHUB_ENV
-
-      - name: Install unzip (if missing)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unzip zip
-
-      - name: Extract ZIP
-        run: |
-          set -euo pipefail
-          mkdir -p extracted
-          unzip -o "$ZIP_FILE" -d extracted
-          ls -al extracted | sed -n '1,200p'
-
-      - name: Create branch, copy extracted files and commit
-        id: commit
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          BRANCH="unzip/$(date +%s)"
-          echo "BRANCH=$BRANCH" >> $GITHUB_ENV
-          git switch -c "$BRANCH"
-          # copie os arquivos extraídos para o repositório raiz (ajuste se preferir outro destino)
-          cp -r extracted/* .
-          # evitar commitar arquivos do .git
-          git add --all
-          if git diff --cached --quiet; then
-            echo "Sem mudanças para commitar."
-            echo "no_changes=true" >> $GITHUB_ENV
+            echo "Nenhum .zip encontrado na raiz do repositório."
             exit 0
           fi
-          git commit -m "Unzip files from $ZIP_FILE"
-          echo "committed=true" >> $GITHUB_ENV
 
-      - name: Push branch (GITHUB_TOKEN) — preferido se permissões permitidas
-        if: env.no_changes != 'true'
-        env:
-          BRANCH: ${{ env.BRANCH }}
-        run: |
-          set -euo pipefail
-          # tentativa usando GITHUB_TOKEN (padrão)
-          git push --set-upstream origin "$BRANCH"
+          echo "Arquivo encontrado: $ZIP_FILE"
+          BASENAME="${ZIP_FILE%.zip}"
+          DEST_DIR="${DEST_BASE}/${BASENAME}"
+          mkdir -p "$DEST_DIR"
 
-      - name: Push branch (PAT fallback)
-        if: failure() && env.no_changes != 'true'
-        env:
-          BRANCH: ${{ env.BRANCH }}
-          PR_TOKEN: ${{ secrets.PR_CREATOR_TOKEN }}
-        run: |
-          set -euo pipefail
-          if [ -z "$PR_TOKEN" ]; then
-            echo "PR_CREATOR_TOKEN não configurado. Abortando push fallback."
+          # rápida checagem path traversal (evitar ../ e paths absolutos)
+          if zipinfo -1 "$ZIP_FILE" | grep -E '(^/|(^|/)\.\.)' >/dev/null 2>&1; then
+            echo "ZIP contém paths perigosos (../ ou /). Abortando para segurança."
             exit 1
           fi
-          git remote set-url origin https://x-access-token:${PR_TOKEN}@github.com/${{ github.repository }}.git
-          git push --set-upstream origin "$BRANCH"
+
+          # detectar arquivos grandes antes de extrair (lista com tamanho)
+          BIGFILE_COUNT=$(unzip -l "$ZIP_FILE" | awk 'NR>3 {print $3, $1}' | awk '$1+0 > ENVIRON["MAX_FILE_SIZE_BYTES"] {print}' | wc -l)
+          if [ "$BIGFILE_COUNT" -gt 0 ]; then
+            echo "ZIP contém arquivos maiores que $MAX_FILE_SIZE_BYTES bytes. Ajuste MAX_FILE_SIZE_BYTES ou trate via LFS. Abortando."
+            exit 1
+          fi
+
+          # extração direta (mais rápida)
+          unzip -qq "$ZIP_FILE" -d "$DEST_DIR"
+
+          # Normalização rápida: se existir exatamente 1 topo diretório, "flatten" (evita deep wrapper folder)
+          # conta nº de entries top-level dentro DEST_DIR
+          TOP_ENTRIES=($(find "$DEST_DIR" -mindepth 1 -maxdepth 1 -printf '%f\n'))
+          if [ "${#TOP_ENTRIES[@]}" -eq 1 ] && [ -d "$DEST_DIR/${TOP_ENTRIES[0]}" ]; then
+            echo "Apenas um diretório top-level encontrado (${TOP_ENTRIES[0]}). Fazendo flatten..."
+            shopt -s dotglob
+            mv "$DEST_DIR/${TOP_ENTRIES[0]}"/* "$DEST_DIR"/ || true
+            rmdir "$DEST_DIR/${TOP_ENTRIES[0]}" || true
+            shopt -u dotglob
+          fi
+
+          # Detectar tipo de projeto e mover para subdiretório padronizado (rápido)
+          # Node
+          if [ -f "$DEST_DIR/package.json" ]; then
+            mkdir -p "projects/node"
+            mv "$DEST_DIR" "projects/node/${BASENAME}"
+            DEST_DIR="projects/node/${BASENAME}"
+            echo "Detected Node project; moved to $DEST_DIR"
+          # Python
+          elif [ -f "$DEST_DIR/pyproject.toml" ] || [ -f "$DEST_DIR/requirements.txt" ]; then
+            mkdir -p "projects/python"
+            mv "$DEST_DIR" "projects/python/${BASENAME}"
+            DEST_DIR="projects/python/${BASENAME}"
+            echo "Detected Python project; moved to $DEST_DIR"
+          # Static web (index.html or index.htm)
+          elif [ -f "$DEST_DIR/index.html" ] || [ -f "$DEST_DIR/index.htm" ]; then
+            mkdir -p "projects/static"
+            mv "$DEST_DIR" "projects/static/${BASENAME}"
+            DEST_DIR="projects/static/${BASENAME}"
+            echo "Detected static site; moved to $DEST_DIR"
+          else
+            # keep under unpacked/<name>
+            echo "Tipo não detectado; mantendo em $DEST_DIR"
+          fi
+
+          # Ajustar permissões: torna executáveis scripts em bin/ e *.sh
+          if [ -d "$DEST_DIR/bin" ]; then
+            chmod -R +x "$DEST_DIR/bin" || true
+          fi
+          find "$DEST_DIR" -type f -name "*.sh" -exec chmod +x {} \; || true
+
+          # Evitar commitar arquivos sensíveis (ex.: .env) por segurança rápida
+          if find "$DEST_DIR" -maxdepth 2 -type f -name ".env" | grep -q .; then
+            echo ".env detectado dentro do ZIP; removendo antes do commit."
+            find "$DEST_DIR" -maxdepth 2 -type f -name ".env" -exec shred -u {} \; || true
+          fi
+
+          # git config
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Create lightweight run-unique branch (no fetch/pull -> rápido e sem conflitos)
+          TIMESTAMP=$(date +%s)
+          WORK_BRANCH="${WORK_BRANCH_PREFIX}/${BASENAME}-${GITHUB_RUN_ID}-${TIMESTAMP}"
+          git checkout -b "$WORK_BRANCH"
+
+          # Stage apenas o diretório que foi extraído (rápido)
+          git add -- "$DEST_DIR"
+
+          # Se nada a commitar, sair
+          if git diff --staged --quiet; then
+            echo "Nenhuma alteração detectada após organização; nada a commitar."
+            exit 0
+          fi
+
+          git commit -m "Unpack and organize $ZIP_FILE (run $GITHUB_RUN_ID)"
+          git push --set-upstream origin "$WORK_BRANCH"
+
+          echo "PUSHED_BRANCH=$WORK_BRANCH" >> $GITHUB_ENV
 
       - name: Create Pull Request
-        if: env.no_changes != 'true'
         uses: peter-evans/create-pull-request@v5
         with:
-          token: ${{ secrets.PR_CREATOR_TOKEN || github.token }}
-          commit-message: "Unzip files from $ZIP_FILE"
-          branch: ${{ env.BRANCH }}
-          title: "Unzip: conteúdo importado de $ZIP_FILE"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ env.PUSHED_BRANCH }}
+          base: ${{ github.event.repository.default_branch }}
+          title: "Unpacked: ${{ github.run_id }} (${{ env.PUSHED_BRANCH }})"
           body: |
-            Workflow extraiu e adicionou arquivos a esta branch automaticamente.
-            Se necessário, ajuste o conteúdo antes de mesclar.
-          labels: automated, unzip
+            Arquivos descompactados e organizados automaticamente (workflow run ${{ github.run_id }})
+            Local final dos arquivos: see branch ${{ env.PUSHED_BRANCH }}
+          labels: "autogenerated,unzip"
