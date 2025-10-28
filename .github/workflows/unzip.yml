@@ -1,54 +1,38 @@
-name: Extract project
-
-on:
-  workflow_dispatch:
-
 permissions:
   contents: write
 
 jobs:
-  extract:
+  extract-and-push:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
-      - name: Checkout repository (with credentials)
+      - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          persist-credentials: true
-          fetch-depth: 0
 
-      - name: Find .zip in repo root
+      - name: Find and extract ZIP
         run: |
           ZIP_FILE="$(find . -maxdepth 1 -type f -iname '*.zip' -print -quit || true)"
           if [ -z "$ZIP_FILE" ]; then
             echo "Nenhum .zip encontrado na raiz do repositório."
             exit 1
           fi
-          echo "Encontrado: $ZIP_FILE"
+          echo "Extraindo $ZIP_FILE"
+          sudo apt-get update -y && sudo apt-get install -y unzip
           unzip -q "$ZIP_FILE" -d extracted
-
-      - name: Move extracted files to repo root
-        run: |
-          shopt -s dotglob || true
+          rm -f "$ZIP_FILE"
+          shopt -s dotglob
           cp -a extracted/* .
           rm -rf extracted
-          echo "✅ Arquivos extraídos com sucesso!"
 
-      - name: Commit and push changes
+      - name: Set up Git credentials (using PAT)
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
         run: |
-          git config user.name "Yohan Linero"
-          git config user.email "yuricv89@hotmail.com"
-          git remote set-url origin "https://NomasIA:${GH_PAT}@github.com/NomasIA/Aguia-finance.git"
+          git config --global user.name "Yohan Linero"
+          git config --global user.email "yuricv89@hotmail.com"
+          git remote set-url origin https://NomasIA:${GH_PAT}@github.com/${{ github.repository }}.git
+
+      - name: Commit and push extracted files
+        run: |
           git add -A
-          git commit -m "Extraído automaticamente pelo GitHub Actions" || echo "Sem alterações para commitar"
+          git commit -m "Extraído automaticamente pelo GitHub Actions" || echo "Sem alterações"
           git push origin HEAD:${{ github.ref_name }}
-
-          # após o commit, cria ou atualiza a branch secundária
-          git checkout -B extracted-by-actions
-          git push origin extracted-by-actions --force
-          echo "🚀 Branch 'extracted-by-actions' atualizada com sucesso."
-
