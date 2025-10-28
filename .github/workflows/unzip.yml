@@ -1,0 +1,23 @@
+name: Extract project
+on:
+  push:
+    paths:
+      - aguiadash-github-final.zip
+
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Extract ZIP
+        run: |
+          sudo apt install unzip -y
+          unzip aguiadash-github-final.zip -d .
+          rm aguiadash-github-final.zip
+      - name: Commit extracted files
+        run: |
+          git config user.name "Yohan Linero"
+          git config user.email "yuricv89@hotmail.com"
+          git add .
+          git commit -m "Extraído automaticamente"
+          git push
