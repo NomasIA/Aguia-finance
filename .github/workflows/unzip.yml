@@ -1,23 +1,40 @@
 name: Extract project
 on:
+  workflow_dispatch: {}      # permite rodar manualmente
   push:
     paths:
-      - aguiadash-github-final.zip
+      - "**/*.zip"           # dispara em qualquer .zip
 
 jobs:
   unzip:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
-      - name: Extract ZIP
+      - uses: actions/checkout@v4
+
+      - name: Find and extract ZIP
         run: |
-          sudo apt install unzip -y
-          unzip aguiadash-github-final.zip -d .
-          rm aguiadash-github-final.zip
+          sudo apt-get update -y
+          sudo apt-get install -y unzip
+          # pega o primeiro zip encontrado na raiz
+          ZIP_FILE="$(ls -1 *.zip 2>/dev/null | head -n 1 || true)"
+          if [ -z "$ZIP_FILE" ]; then
+            echo "Nenhum .zip encontrado na raiz do repositório."
+            exit 1
+          fi
+          echo "Extraindo: $ZIP_FILE"
+          unzip -o "$ZIP_FILE" -d .
+          rm -f "$ZIP_FILE"
+
       - name: Commit extracted files
         run: |
           git config user.name "Yohan Linero"
           git config user.email "yuricv89@hotmail.com"
           git add .
-          git commit -m "Extraído automaticamente"
-          git push
+          # Só commita se houver mudanças
+          if ! git diff --cached --quiet; then
+            git commit -m "Extraído automaticamente pelo GitHub Actions"
+            git push
+          else
+            echo "Sem mudanças para commitar."
+          fi
+
